@@ -1,0 +1,11 @@
+PyQt5>=5.15
+pyserial>=3.5
+
+# --- Sesli asistan ---
+google-cloud-speech>=2.24
+google-cloud-texttospeech>=2.16
+sounddevice>=0.4
+webrtcvad>=2.0.10
+numpy>=1.24
+openwakeword>=0.5
+anthropic>=0.40

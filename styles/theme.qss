@@ -1,0 +1,137 @@
+/* SILVERLINE - koyu grafit zemin, kor/amber vurgu */
+
+* {
+    font-family: "Inter", "DejaVu Sans", sans-serif;
+    color: #f5f1ea;
+}
+
+QMainWindow, QWidget#root {
+    background-color: #141312;
+}
+
+/* ---- Sol menü (nav rail) ---- */
+QWidget#navRail {
+    background-color: #211f1d;
+    border-right: 1px solid #3a3532;
+}
+
+QPushButton.navBtn {
+    background: transparent;
+    border: none;
+    border-radius: 14px;
+}
+QPushButton.navBtn:checked {
+    background-color: #e8672c;
+}
+QPushButton.navBtn:hover:!checked {
+    background-color: #2a2724;
+}
+
+/* ---- Genel kart / panel ---- */
+QFrame.card {
+    background-color: #211f1d;
+    border: 1px solid #3a3532;
+    border-radius: 16px;
+}
+QFrame.card:hover {
+    border: 1px solid #4d5a63;
+}
+QFrame.card[selected="true"] {
+    border: 1px solid #e8672c;
+    background-color: rgba(232, 103, 44, 0.10);
+}
+
+QLabel.title {
+    font-size: 19px;
+    font-weight: 600;
+}
+QLabel.dim {
+    color: #a89f93;
+    font-size: 11.5px;
+}
+QLabel.funcName {
+    font-size: 14px;
+    font-weight: 600;
+}
+QLabel.mono {
+    font-family: "JetBrains Mono", "DejaVu Sans Mono", monospace;
+}
+
+/* ---- Butonlar ---- */
+QPushButton.emberBtn {
+    background-color: #e8672c;
+    color: #fff5ee;
+    border: none;
+    border-radius: 14px;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 12px;
+}
+QPushButton.emberBtn:pressed {
+    background-color: #c94f1c;
+}
+QPushButton.emberBtn:disabled {
+    background-color: #4d5a63;
+    color: #a89f93;
+}
+
+QPushButton.ghostBtn {
+    background-color: #2a2724;
+    color: #a89f93;
+    border: 1px solid #3a3532;
+    border-radius: 14px;
+    font-size: 14px;
+    padding: 10px 20px;
+}
+
+QPushButton.roundAdj {
+    background-color: #2a2724;
+    border: 1px solid #3a3532;
+    border-radius: 19px;
+    font-size: 18px;
+    font-weight: 600;
+    min-width: 38px; max-width: 38px;
+    min-height: 38px; max-height: 38px;
+}
+QPushButton.roundAdj:pressed {
+    background-color: #3a4750;
+}
+
+/* ---- Chip / kategori düğmeleri ---- */
+QPushButton.chip {
+    background-color: #2a2724;
+    border: 1px solid #3a3532;
+    border-radius: 16px;
+    color: #a89f93;
+    font-size: 11.5px;
+    padding: 6px 14px;
+}
+QPushButton.chip:checked {
+    background-color: #e8672c;
+    color: #fff5ee;
+    border: 1px solid #e8672c;
+}
+
+/* ---- Ayarlar satırları ---- */
+QFrame.settingRow {
+    border-bottom: 1px solid #3a3532;
+}
+QPushButton.toggle {
+    background-color: #3a4750;
+    border-radius: 12px;
+    min-width: 44px; max-width: 44px;
+    min-height: 24px; max-height: 24px;
+}
+QPushButton.toggle:checked {
+    background-color: #e8672c;
+}
+
+QScrollArea { border: none; background: transparent; }
+QScrollBar:horizontal, QScrollBar:vertical {
+    background: transparent;
+    height: 6px; width: 6px;
+}
+QScrollBar::handle {
+    background: #3a3532;
+    border-radius: 3px;
+}
