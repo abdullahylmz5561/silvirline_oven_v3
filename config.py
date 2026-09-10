@@ -1,81 +1,170 @@
 """
-SILVERLINE Akıllı Fırın Arayüzü - Genel Ayarlar
-=================================================
-Jetson TX2 üzerinde 800x480 dokunmatik panel için hazırlanmıştır.
-Geliştirme sırasında (Jetson takılı değilken) DEBUG_MODE = True yaparak
-uygulamayı normal bir masaüstü penceresinde, seri haberleşme simülasyonuyla
-çalıştırabilirsiniz.
+core/llm_assistant.py
+========================
+Gemini (Vertex AI REST API üzerinden) ile serbest sohbet eden ve
+gerektiğinde fırını gerçekten kontrol eden (function calling) motor.
+
+NEDEN google-genai SDK'sı DEĞİL: O paket Python 3.10+ gerektiriyor, Jetson
+TX2'nin standart JetPack kurulumu Python 3.6.9 ile geliyor. SDK'yı atlayıp
+Vertex AI'ın REST API'sine google-auth + requests ile doğrudan istek
+atıyoruz - ikisi de zaten Google Cloud Speech/Text-to-Speech için kurulu
+ve Python 3.6 ile tam uyumlu. Sonuç işlevsel olarak SDK ile birebir aynı.
+
+Kimlik bilgisi: STT/TTS için zaten tanımladığınız AYNI Service Account
+JSON dosyası (config.GOOGLE_CREDENTIALS_PATH) kullanılıyor.
 """
 
-# --- Ekran ---
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 480
+import requests
+from google.oauth2 import service_account
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
-# True: pencereli (masaüstünde geliştirme), fare imleci görünür, seri port
-#       bulunamazsa otomatik simülasyon moduna geçer.
-# False: gerçek donanım (Jetson TX2) - tam ekran, imleç gizli, kiosk modu.
-DEBUG_MODE = True
+import config
+from core.oven_controller import OVEN_FUNCTIONS
 
-# --- Seri Haberleşme (fırın kontrol kartı ile) ---
-SERIAL_PORT = "/dev/ttyTHS1"   # Jetson TX2 donanımsal UART. Gerekirse /dev/ttyUSB0 yapın.
-SERIAL_BAUDRATE = 115200
-SERIAL_TIMEOUT = 1.0           # saniye
-# Port açılamazsa (kart bağlı değilse) otomatik olarak simülasyon moduna düş.
-SERIAL_AUTO_SIMULATE = True
+_credentials = None
 
-# --- Sıcaklık sınırları ---
-MIN_TEMP = 50
-MAX_TEMP = 250
-DEFAULT_TEMP = 180
-TEMP_STEP = 10
 
-# --- Açılış animasyonu ---
-SPLASH_DURATION_MS = 2600
-SPLASH_TEXT = "SILVERLINE"
+def _get_token() -> str:
+    global _credentials
+    if _credentials is None:
+        _credentials = service_account.Credentials.from_service_account_file(
+            config.GOOGLE_CREDENTIALS_PATH,
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+    if not _credentials.valid:
+        _credentials.refresh(GoogleAuthRequest())
+    return _credentials.token
 
-# --- Sesli asistan ---
-# Google Cloud Speech-to-Text + Text-to-Speech kullanılıyor (internet gerekir).
-# Uyandırma kelimesi (wake word) tespiti YERELDE çalışır - sürekli ses akışı
-# buluta gönderilmez; sadece wake word tetiklendikten veya mikrofon butonuna
-# basıldıktan sonraki komut cümlesi buluta gider.
-ASSISTANT_ENABLED = True
 
-# Google Cloud kimlik bilgileri (Service Account JSON dosyası).
-# export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json şeklinde ortam
-# değişkeni ile de verilebilir; burası boşsa o ortam değişkeni kullanılır.
-GOOGLE_CREDENTIALS_PATH = ""   # örn. "/home/nvidia/silverline_oven/gcloud_key.json"
+_MODE_LEGEND = "\n".join(f'- {f["key"]}: {f["label"]}' for f in OVEN_FUNCTIONS)
+_MODE_KEYS = [f["key"] for f in OVEN_FUNCTIONS]
 
-STT_LANGUAGE_CODE = "tr-TR"
-TTS_LANGUAGE_CODE = "tr-TR"
-TTS_VOICE_NAME = "tr-TR-Wavenet-A"     # Google'ın Türkçe WaveNet seslerinden biri
-AUDIO_SAMPLE_RATE = 16000               # STT ve wake word için gereken oran
-AUDIO_CHANNELS = 1
-MIC_DEVICE_INDEX = None                 # None = sistem varsayılan mikrofonu
+SYSTEM_PROMPT = """Sen SILVERLINE akıllı fırının sesli asistanısın. Türkçe, sıcak ve
+samimi konuşuyorsun - bir arkadaş gibi, resmi değil. Yanıtların SESLİ
+OKUNACAK: madde işareti, markdown, uzun listeler kullanma; doğal, akıcı
+cümleler kur. Tarif önerirken 2-4 cümlelik pratik bir özet ver, gerekirse
+kullanıcı detay isterse devam edersin.
 
-# Hoparlörden çalmadan önce eklenen sessizlik - donanımın "uyanma" süresi
-# yüzünden yanıtın ilk hecesi kesiliyorsa bu değeri artırın (ör. 400).
-TTS_PLAYBACK_PADDING_MS = 250
+Kullanıcı fırınla ilgili genel sohbet edebilir, tarif sorabilir, pişirme
+tavsiyesi isteyebilir - bunlara doğrudan kendi bilgin ile cevap ver, araç
+çağırmana gerek yok. SADECE kullanıcı fırını gerçekten bir duruma
+GETİRMENİ istediğinde (ör. "fırını başlat", "200 dereceye ayarla",
+"pizza moduna al", "bunu uygula") ilgili aracı çağır.
 
-# --- Uyandırma kelimesi (openWakeWord) ---
-WAKE_WORD_ENABLED = True
-WAKE_WORD_MODEL_PATH = "assets/hey_silverline.onnx"   # eğitilmiş özel model
-WAKE_WORD_THRESHOLD = 0.5
+Fırın modları:
+""" + _MODE_LEGEND + """
 
-# --- Ses kaydı / VAD (voice activity detection) ---
-VAD_AGGRESSIVENESS = 2          # 0-3, yüksek = daha agresif sessizlik tespiti
-VAD_SILENCE_MS = 900            # bu kadar sessizlikten sonra kayıt durur
-VAD_MAX_RECORD_MS = 8000        # komut cümlesi için üst sınır (güvenlik)
+Sıcaklık aralığı 50-250°C arası. Bir tarif önerip kullanıcı "tamam bunu
+yap" derse, önerdiğin sıcaklık/süre/modu uygun araçlarla gerçekten
+uygula - tahmin ettiğin makul değerleri kullan (yerel tarif kütüphanesiyle
+sınırlı değilsin, herhangi bir yemek için mantıklı sıcaklık/süre önerebilirsin).
+"""
 
-# --- Konuşma motoru (Claude API) ---
-# Eski kural tabanlı çözümleyici (core/intent_parser.py) yalnızca sabit
-# kalıplara cevap veriyordu. Bunun yerine Claude API ile serbest sohbet +
-# function calling kullanılıyor: model hem doğal sohbet edip tarif önerebilir
-# hem de gerektiğinde gerçekten fırını kontrol eden araçları (tool) çağırır.
-#
-# Kurulum: pip install anthropic
-#          export ANTHROPIC_API_KEY=sk-ant-...
-# (Anahtarı asla config.py içine yazmayın - ortam değişkeni olarak tutun.)
-LLM_ENABLED = True
-ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"   # hızlı ve ucuz, sesli asistan için yeterli
-CONVERSATION_MAX_TURNS = 6   # hafızada tutulacak kullanıcı+asistan çift sayısı
+_TOOLS = [{
+    "functionDeclarations": [
+        {
+            "name": "set_mode",
+            "description": "Fırının pişirme modunu değiştirir.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {"mode": {"type": "STRING", "enum": _MODE_KEYS}},
+                "required": ["mode"],
+            },
+        },
+        {
+            "name": "set_temperature",
+            "description": "Fırının hedef sıcaklığını derece (°C) cinsinden ayarlar.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {"value": {"type": "INTEGER"}},
+                "required": ["value"],
+            },
+        },
+        {
+            "name": "set_timer",
+            "description": "Pişirme zamanlayıcısını dakika cinsinden kurar.",
+            "parameters": {
+                "type": "OBJECT",
+                "properties": {"minutes": {"type": "INTEGER"}},
+                "required": ["minutes"],
+            },
+        },
+        {
+            "name": "start_cooking",
+            "description": "Fırını mevcut mod ve sıcaklık ayarıyla çalıştırmaya başlar.",
+            "parameters": {"type": "OBJECT", "properties": {}},
+        },
+        {
+            "name": "stop_cooking",
+            "description": "Fırını durdurur.",
+            "parameters": {"type": "OBJECT", "properties": {}},
+        },
+    ]
+}]
 
+
+def _endpoint_url() -> str:
+    loc = config.GEMINI_LOCATION
+    return (
+        f"https://{loc}-aiplatform.googleapis.com/v1/projects/"
+        f"{config.GOOGLE_CLOUD_PROJECT_ID}/locations/{loc}/publishers/google/"
+        f"models/{config.GEMINI_MODEL}:generateContent"
+    )
+
+
+def generate_reply(user_text, history, on_tool_call):
+    """
+    Kullanıcının söylediği cümleyi Gemini'ye gönderir, gerekirse fırın
+    araçlarını çağırır (on_tool_call(name, params) ile - genelde
+    assistant_bridge.handle_intent).
+
+    history ve dönen geçmiş: düz JSON uyumlu sözlük listesi
+    (ör. [{"role": "user", "parts": [{"text": "..."}]}, ...]) - kolayca
+    saklanıp bir sonraki çağrıya aynen geri verilebilir.
+
+    Döner: (yanıt_metni, güncellenmiş_geçmiş)
+    """
+    contents = list(history) + [{"role": "user", "parts": [{"text": user_text}]}]
+    final_text_parts = []
+
+    for _ in range(3):  # ardışık araç çağrısı zinciri için güvenlik sınırı
+        body = {
+            "contents": contents,
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "tools": _TOOLS,
+            "generationConfig": {"maxOutputTokens": 400},
+        }
+        headers = {
+            "Authorization": "Bearer " + _get_token(),
+            "Content-Type": "application/json; charset=utf-8",
+        }
+        resp = requests.post(_endpoint_url(), headers=headers, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        candidate_content = data["candidates"][0]["content"]
+        contents.append(candidate_content)
+
+        parts = candidate_content.get("parts", [])
+        function_calls = [p["functionCall"] for p in parts if "functionCall" in p]
+        text_parts = [p["text"] for p in parts if "text" in p]
+        final_text_parts.extend(text_parts)
+
+        if not function_calls:
+            break
+
+        response_parts = []
+        for fc in function_calls:
+            name = fc["name"]
+            args = fc.get("args", {})
+            try:
+                on_tool_call(name, args)
+                result = {"result": "Tamamlandı."}
+            except Exception as exc:
+                result = {"result": "Hata oluştu: " + str(exc)}
+            response_parts.append({"functionResponse": {"name": name, "response": result}})
+        contents.append({"role": "user", "parts": response_parts})
+
+    reply = " ".join(t.strip() for t in final_text_parts if t.strip()) or "Tamam."
+    trimmed_history = contents[-(config.CONVERSATION_MAX_TURNS * 2):]
+    return reply, trimmed_history
